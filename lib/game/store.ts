@@ -56,7 +56,7 @@ export const useGameStore = create<GameStore>()(
     }),
     {
       name: "company-simulator-save",
-      version: 4,
+      version: 5,
       migrate: () => createInitialGameState()
     }
   )

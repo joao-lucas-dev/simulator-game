@@ -43,7 +43,7 @@ export function createInitialGameState(): GameState {
     isRunning: false,
     speed: 1,
     cash: 1000,
-    reputation: 20,
+    reputation: 0,
     motoboys: 1,
     inventory: ingredients.map((ingredient) => ({
       ingredientId: ingredient.id,
