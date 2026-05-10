@@ -2,6 +2,7 @@ import { clamp } from "@/lib/utils";
 import {
   contactResponseMinutes,
   customerNames,
+  dailyOverheadCosts,
   dayLength,
   ingredients,
   marketUpdateInterval,
@@ -41,7 +42,7 @@ export function createInitialGameState(): GameState {
     shopOpen: false,
     isRunning: false,
     speed: 1,
-    cash: 10000,
+    cash: 1000,
     reputation: 20,
     motoboys: 1,
     inventory: ingredients.map((ingredient) => ({
@@ -172,6 +173,7 @@ export function acceptOrder(state: GameState, orderId: string): GameState {
 }
 
 export function rejectOrder(state: GameState, orderId: string): GameState {
+  const order = state.orders.find((item) => item.id === orderId);
   return {
     ...state,
     reputation: clamp(state.reputation - 1, 0, 100),
@@ -180,6 +182,17 @@ export function rejectOrder(state: GameState, orderId: string): GameState {
         ? { ...order, status: "rejected" }
         : order
     ),
+    feedback: [
+      ...state.feedback,
+      {
+        id: id("feedback", state.day, state.minute, state.feedback.length + 1),
+        orderId,
+        message: `${order?.customerName ?? "Cliente"} ficou chateado com a recusa.`,
+        reputationDelta: -1,
+        reason: "rejected_order",
+        minute: state.minute
+      }
+    ],
     eventLog: [`Pedido ${orderId} recusado. A reputacao caiu levemente.`, ...state.eventLog]
   };
 }
@@ -282,7 +295,17 @@ export function endDay(state: GameState): GameState {
     label: `Diaria de ${state.motoboys} motoboy(s)`,
     amount: -laborCost
   };
-  const ledger = [...state.ledger, laborEntry];
+  const overheadEntries = dailyOverheadCosts.map((cost, index) => ({
+    id: id("ledger", state.day, state.minute, state.ledger.length + 2 + index),
+    day: state.day,
+    minute: state.minute,
+    type: "overhead" as const,
+    label: cost.label,
+    amount: -cost.amount
+  }));
+  const overheadTotal = overheadEntries.reduce((total, entry) => total + Math.abs(entry.amount), 0);
+  const totalDailyCosts = laborCost + overheadTotal;
+  const ledger = [...state.ledger, laborEntry, ...overheadEntries];
   const dayLedger = ledger.filter((entry) => entry.day === state.day);
   const revenue = sum(dayLedger.filter((entry) => entry.amount > 0).map((entry) => entry.amount));
   const costs = Math.abs(sum(dayLedger.filter((entry) => entry.amount < 0).map((entry) => entry.amount)));
@@ -302,7 +325,7 @@ export function endDay(state: GameState): GameState {
     delivered,
     complaints,
     reputation: state.reputation,
-    cashEnd: Number((state.cash - laborCost).toFixed(2))
+    cashEnd: Number((state.cash - totalDailyCosts).toFixed(2))
   };
   const nextDay = state.day + 1;
   const nextOvenCount = hasUpgrade(state, "oven") ? 2 : 1;
@@ -315,7 +338,7 @@ export function endDay(state: GameState): GameState {
     shopOpen: false,
     isRunning: false,
     speed: 1,
-    cash: Number((state.cash - laborCost).toFixed(2)),
+    cash: Number((state.cash - totalDailyCosts).toFixed(2)),
     prices,
     marketHistory: createMarketSnapshot(nextDay, 0, prices),
     orders: [],
@@ -330,6 +353,7 @@ export function endDay(state: GameState): GameState {
     ledger,
     eventLog: [
       `Diaria dos motoboys descontada: R$ ${laborCost.toFixed(2)}.`,
+      `Custos fixos descontados: R$ ${overheadTotal.toFixed(2)}.`,
       `Dia ${nextDay} preparado. Estoque mantido e mercado reiniciado.`,
       ...state.eventLog
     ],
@@ -440,6 +464,17 @@ function expireContacts(state: GameState, previousState: GameState): GameState {
         ? { ...order, status: "expired" }
         : order
     ),
+    feedback: [
+      ...state.feedback,
+      ...expiredOrders.map((order, index) => ({
+        id: id("feedback", state.day, state.minute, state.feedback.length + index + 1),
+        orderId: order.id,
+        message: `${order.customerName} desistiu porque demorou para receber resposta.`,
+        reputationDelta: -Math.ceil(order.demanding / 2),
+        reason: "slow_response" as const,
+        minute: state.minute
+      }))
+    ],
     eventLog: [
       `${expiredOrders.length} cliente(s) desistiram no chat. Reputacao -${penalty}.`,
       ...state.eventLog
@@ -496,6 +531,7 @@ function closeDelivery(state: GameState, order: Order): GameState {
         orderId: order.id,
         message,
         reputationDelta: repDelta,
+        reason: adjustedLate > 0 ? "late_delivery" : "delivery",
         minute: arrivalMinute
       }
     ],

@@ -19,6 +19,12 @@ export type OrderStatus =
   | "failed";
 
 export type UpgradeId = "helper" | "oven" | "packaging" | "marketing" | "menu";
+export type FeedbackReason =
+  | "taste"
+  | "delivery"
+  | "late_delivery"
+  | "slow_response"
+  | "rejected_order";
 
 export const InventoryItemSchema = z.object({
   ingredientId: IngredientIdSchema,
@@ -71,16 +77,17 @@ export const CashLedgerEntrySchema = z.object({
   id: z.string(),
   day: z.number().int().positive(),
   minute: z.number().int().nonnegative(),
-  type: z.enum(["purchase", "sale", "upgrade", "penalty", "labor"]),
+  type: z.enum(["purchase", "sale", "upgrade", "penalty", "labor", "overhead"]),
   label: z.string(),
   amount: z.number()
 });
 
 export const CustomerFeedbackSchema = z.object({
   id: z.string(),
-  orderId: z.string(),
+  orderId: z.string().optional(),
   message: z.string(),
   reputationDelta: z.number(),
+  reason: z.enum(["taste", "delivery", "late_delivery", "slow_response", "rejected_order"]),
   minute: z.number().int().nonnegative()
 });
 

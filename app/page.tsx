@@ -5,12 +5,14 @@ import {
   BarChart3,
   Bell,
   Bike,
+  BriefcaseBusiness,
   CircleDollarSign,
   CircleHelp,
   ClipboardList,
   Clock,
   Flame,
   LineChart,
+  HeartCrack,
   MessageCircle,
   Package,
   Pause,
@@ -69,6 +71,7 @@ import {
 import { formatMoney } from "@/lib/utils";
 import {
   dayLength,
+  dailyOverheadCosts,
   ingredients,
   motoboyDailyCost,
   motoboyHireCost
@@ -97,6 +100,7 @@ const marketColors: Record<IngredientId, string> = {
 
 export default function Home() {
   const game = useGameStore();
+  const [activeTab, setActiveTab] = useState("operation");
   const [selectedMarket, setSelectedMarket] = useState<MarketSelection>("all");
 
   const { shopOpen, isRunning, speed, advanceTime } = game;
@@ -117,7 +121,7 @@ export default function Home() {
   const available = availableMotoboys(game);
 
   return (
-    <Tabs defaultValue="operation" className="min-h-screen bg-[#f7f7f7] text-[#232323] lg:grid lg:grid-cols-[262px_1fr]">
+    <Tabs value={activeTab} onValueChange={setActiveTab} className="min-h-screen bg-[#f7f7f7] text-[#232323] lg:grid lg:grid-cols-[262px_1fr]">
       <aside className="hidden border-r border-[#e5e5e5] bg-white lg:flex lg:flex-col">
         <div className="flex h-14 items-center gap-3 border-b border-[#e5e5e5] px-5">
           <div className="grid h-7 w-7 place-items-center rounded-md bg-[#ff1934] text-white">
@@ -138,6 +142,7 @@ export default function Home() {
         <TabsList className="flex h-auto flex-1 flex-col items-stretch justify-start rounded-none bg-transparent p-0 text-[#161616]">
           <SidebarTab value="operation" icon={BarChart3} label="Operacao" />
           <SidebarTab value="inventory" icon={Package} label="Estoque e mercado" />
+          <SidebarTab value="staff" icon={BriefcaseBusiness} label="Funcionarios" />
           <SidebarTab value="reports" icon={ClipboardList} label="Relatorio" />
           <SidebarTab value="upgrades" icon={Wrench} label="Melhorias" />
         </TabsList>
@@ -175,6 +180,7 @@ export default function Home() {
               <TabsList className="grid h-auto grid-cols-2 gap-2 rounded-md bg-white p-2 text-[#161616] shadow-sm sm:grid-cols-4">
                 <MobileTab value="operation" label="Operacao" />
                 <MobileTab value="inventory" label="Estoque" />
+                <MobileTab value="staff" label="Equipe" />
                 <MobileTab value="reports" label="Relatorio" />
                 <MobileTab value="upgrades" label="Melhorias" />
               </TabsList>
@@ -217,12 +223,11 @@ export default function Home() {
               </div>
             </section>
 
-            <section className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            <section className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <StatusCard icon={CircleDollarSign} label="Caixa atual" value={formatMoney(game.cash)} />
               <StatusCard icon={Clock} label="Hora" value={`Dia ${game.day}, ${timeLabel(game.minute)}`} />
-              <StatusCard icon={Star} label="Reputacao" value={`${game.reputation}/100`} hint={reputationLabel(game.reputation)} />
+              <ReputationCard game={game} />
               <StatusCard icon={Users} label="Motoboys" value={`${available}/${game.motoboys}`} hint="disponiveis" />
-              <StatusCard icon={ShoppingBag} label="Loja" value={shopOpen ? "Aberta" : "Fechada"} />
             </section>
 
             {warnings.length > 0 && (
@@ -231,7 +236,14 @@ export default function Home() {
                   <Alert key={warning.title} variant={warning.type}>
                     <ShieldCheck className="mb-2 h-4 w-4" />
                     <AlertTitle>{warning.title}</AlertTitle>
-                    <AlertDescription>{warning.description}</AlertDescription>
+                    <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+                      <span>{warning.description}</span>
+                      {warning.action === "inventory" && (
+                        <Button size="sm" variant="outline" onClick={() => setActiveTab("inventory")}>
+                          Ir para estoque
+                        </Button>
+                      )}
+                    </AlertDescription>
                   </Alert>
                 ))}
               </div>
@@ -243,6 +255,10 @@ export default function Home() {
 
             <TabsContent value="inventory" className="mt-0">
               <InventoryPanel game={game} selectedMarket={selectedMarket} setSelectedMarket={setSelectedMarket} />
+            </TabsContent>
+
+            <TabsContent value="staff" className="mt-0">
+              <StaffPanel game={game} />
             </TabsContent>
 
             <TabsContent value="reports" className="mt-0">
@@ -310,12 +326,103 @@ function StatusCard({ icon: Icon, label, value, hint }: { icon: LucideIcon; labe
   );
 }
 
+function ReputationCard({ game }: { game: GameStore }) {
+  const breakdown = reputationBreakdown(game);
+
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <button className="rounded-md border border-[#e8e8e8] bg-white p-4 text-left transition-colors hover:border-[#ff1934]/40">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm text-[#777]">Reputacao</div>
+            <Star className="h-4 w-4 text-[#ff1934]" />
+          </div>
+          <div className="mt-2 text-xl font-semibold text-[#2b2b2b]">{game.reputation}/100</div>
+          <div className="mt-1 text-xs text-[#888]">{reputationLabel(game.reputation)}</div>
+        </button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Por que a reputacao esta assim?</DialogTitle>
+          <DialogDescription>Resumo dos sinais recentes dos clientes.</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          {breakdown.map((item) => (
+            <div key={item.label} className="flex items-center justify-between rounded-md border p-3">
+              <div>
+                <div className="font-medium">{item.label}</div>
+                <div className="text-sm text-[#777]">{item.description}</div>
+              </div>
+              <Badge variant={item.score < 0 ? "destructive" : item.score > 0 ? "default" : "outline"}>
+                {item.score > 0 ? "+" : ""}
+                {item.score}
+              </Badge>
+            </div>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function StaffPanel({ game }: { game: GameStore }) {
+  const available = availableMotoboys(game);
+  const delivering = game.orders.filter((order) => order.status === "delivering").length;
+  const dailyTotal = game.motoboys * motoboyDailyCost;
+
+  return (
+    <div className="grid gap-5 lg:grid-cols-[1fr_0.8fr]">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Users className="h-5 w-5" />
+            Motoboys
+          </CardTitle>
+          <CardDescription>Gerencie a capacidade de entrega da loja.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <ReportValue label="Contratados" value={String(game.motoboys)} />
+            <ReportValue label="Disponiveis" value={String(available)} />
+            <ReportValue label="Em rota" value={String(delivering)} />
+          </div>
+          <div className="mt-5 rounded-md border border-[#ededed] bg-[#fbfbfb] p-4">
+            <div className="text-sm font-medium">Contratar motoboy</div>
+            <div className="mt-1 text-sm text-[#777]">
+              Custo imediato de {formatMoney(motoboyHireCost)} e diaria de {formatMoney(motoboyDailyCost)} por dia.
+            </div>
+            <Button className="mt-4" onClick={game.hireMotoboy} disabled={game.cash < motoboyHireCost}>
+              <UserPlus className="mr-2 h-4 w-4" />
+              Contratar motoboy
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Custos da equipe</CardTitle>
+          <CardDescription>Descontados ao fechar o dia.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3">
+          <ReportValue label="Diaria por motoboy" value={formatMoney(motoboyDailyCost)} />
+          <ReportValue label="Total diario atual" value={formatMoney(dailyTotal)} />
+          <ReportValue label="Custo de contratacao" value={formatMoney(motoboyHireCost)} />
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 function OperationKanban({ game, contacts }: { game: GameStore; contacts: Order[] }) {
   const waiting = game.orders.filter((order) => order.status === "accepted");
   const baking = game.orders.filter((order) => order.status === "baking");
   const ready = game.orders.filter((order) => order.status === "ready");
   const delivering = game.orders.filter((order) => order.status === "delivering");
+  const lostContacts = game.orders.filter((order) => ["rejected", "expired"].includes(order.status)).slice(0, 3);
   const available = availableMotoboys(game);
+  const busyOvens = game.oven.filter((slot) => slot.orderId).length;
+  const freeOvens = game.oven.filter((slot) => !slot.orderId);
 
   return (
     <div className="grid gap-4 xl:grid-cols-5">
@@ -324,6 +431,17 @@ function OperationKanban({ game, contacts }: { game: GameStore; contacts: Order[
         {game.shopOpen && contacts.length === 0 && <EmptyState text="Nenhum cliente aguardando." />}
         {contacts.map((order) => (
           <OrderCard key={order.id} game={game} order={order} action="inbox" />
+        ))}
+        {lostContacts.map((order) => (
+          <div key={order.id} className="rounded-md border border-red-100 bg-red-50 p-4 text-sm text-[#7f1d1d]">
+            <div className="flex items-center gap-2 font-medium">
+              <HeartCrack className="h-4 w-4" />
+              {order.customerName} ficou chateado
+            </div>
+            <div className="mt-1 text-xs">
+              {order.status === "expired" ? "Demora na resposta" : "Pedido recusado"}
+            </div>
+          </div>
         ))}
       </KanbanColumn>
 
@@ -334,10 +452,15 @@ function OperationKanban({ game, contacts }: { game: GameStore; contacts: Order[
         ))}
       </KanbanColumn>
 
-      <KanbanColumn title="No forno" icon={Flame} count={baking.length}>
+      <KanbanColumn title="No forno" icon={Flame} count={baking.length} subtitle={`${busyOvens}/${game.oven.length} fornos ocupados`}>
         {baking.length === 0 && <EmptyState text="Forno sem pedidos." />}
         {baking.map((order) => (
           <OrderCard key={order.id} game={game} order={order} action="baking" />
+        ))}
+        {freeOvens.map((slot) => (
+          <div key={slot.id} className="rounded-md border border-dashed border-[#dedede] bg-white p-4 text-sm text-[#777]">
+            {slot.id} livre
+          </div>
         ))}
       </KanbanColumn>
 
@@ -349,7 +472,7 @@ function OperationKanban({ game, contacts }: { game: GameStore; contacts: Order[
       </KanbanColumn>
 
       <KanbanColumn title="Em entrega" icon={Bike} count={delivering.length} subtitle={`${available}/${game.motoboys} motoboys livres`}>
-        <div className="mb-3 rounded-md border border-[#ededed] bg-white p-3">
+        <div className="hidden">
           <div className="text-sm font-medium">Equipe de motoboys</div>
           <div className="mt-1 text-xs text-[#777]">
             Contratar: {formatMoney(motoboyHireCost)} · Diaria: {formatMoney(motoboyDailyCost)}
@@ -616,6 +739,9 @@ function ReportsPanel({ game, chartData }: { game: GameStore; chartData: { day: 
   const dayRevenue = deliveredOrders.reduce((total, order) => total + order.value, 0);
   const averageTicket = deliveredOrders.length > 0 ? dayRevenue / deliveredOrders.length : 0;
   const currentCosts = Math.abs(game.ledger.filter((entry) => entry.day === game.day && entry.amount < 0).reduce((total, entry) => total + entry.amount, 0));
+  const laborCosts = Math.abs(game.ledger.filter((entry) => entry.day === game.day && entry.type === "labor").reduce((total, entry) => total + entry.amount, 0));
+  const overheadCosts = Math.abs(game.ledger.filter((entry) => entry.day === game.day && entry.type === "overhead").reduce((total, entry) => total + entry.amount, 0));
+  const projectedOverhead = dailyOverheadCosts.reduce((total, cost) => total + cost.amount, 0);
 
   return (
     <div className="grid gap-5 xl:grid-cols-[1fr_0.9fr]">
@@ -645,6 +771,9 @@ function ReportsPanel({ game, chartData }: { game: GameStore; chartData: { day: 
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
               <ReportValue label="Custos do dia" value={formatMoney(currentCosts)} />
+              <ReportValue label="Funcionarios" value={formatMoney(laborCosts)} />
+              <ReportValue label="Custos fixos" value={formatMoney(overheadCosts)} />
+              <ReportValue label="Fixos previstos" value={formatMoney(projectedOverhead)} />
               <ReportValue label="Caixa atual" value={formatMoney(game.cash)} />
             </div>
           )}
@@ -739,14 +868,15 @@ function EmptyState({ text }: { text: string }) {
 }
 
 function getWarnings(game: GameStore, contacts: Order[], activeOrders: Order[], missingToOpen: string[]) {
-  const warnings: { title: string; description: string; type: "default" | "destructive" }[] = [];
+  const warnings: { title: string; description: string; type: "default" | "destructive"; action?: "inventory" }[] = [];
   const urgentContacts = contacts.filter((order) => (order.contactExpiresAt ?? 0) - game.minute <= 5).length;
 
   if (!game.shopOpen && missingToOpen.length > 0) {
     warnings.push({
       title: "Estoque minimo para abrir",
       description: `Compre antes: ${missingToOpen.join(", ")}.`,
-      type: "destructive"
+      type: "destructive",
+      action: "inventory"
     });
   }
   if (urgentContacts > 0) {
@@ -779,6 +909,41 @@ function reputationLabel(reputation: number) {
   if (reputation < 60) return "normal";
   if (reputation < 80) return "boa";
   return "excelente";
+}
+
+function reputationBreakdown(game: GameStore) {
+  const scoreFor = (reason: string) =>
+    game.feedback
+      .filter((item) => item.reason === reason)
+      .reduce((total, item) => total + item.reputationDelta, 0);
+
+  return [
+    {
+      label: "Gosto da pizza",
+      description: "Ainda sem avaliacao direta de sabor.",
+      score: scoreFor("taste")
+    },
+    {
+      label: "Entrega",
+      description: "Entregas no prazo melhoram esta percepcao.",
+      score: scoreFor("delivery")
+    },
+    {
+      label: "Atraso na entrega",
+      description: "Pedidos atrasados reduzem confianca.",
+      score: scoreFor("late_delivery")
+    },
+    {
+      label: "Demora na resposta",
+      description: "Mensagens expiradas pesam contra a loja.",
+      score: scoreFor("slow_response")
+    },
+    {
+      label: "Pedidos recusados",
+      description: "Recusas frustram clientes interessados.",
+      score: scoreFor("rejected_order")
+    }
+  ];
 }
 
 function buildMarketData(game: GameStore, selectedMarket: MarketSelection) {

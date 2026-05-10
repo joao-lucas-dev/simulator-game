@@ -6,6 +6,11 @@ export const marketUpdateInterval = 30;
 export const contactResponseMinutes = 15;
 export const motoboyHireCost = 600;
 export const motoboyDailyCost = 80;
+export const dailyOverheadCosts = [
+  { id: "gas", label: "Gas", amount: 45 },
+  { id: "electricity", label: "Luz", amount: 35 },
+  { id: "maintenance", label: "Manutencao e limpeza", amount: 25 }
+] as const;
 
 export const ingredients: Ingredient[] = [
   { id: "dough", name: "Massa", unit: "un", basePrice: 3.2 },
