@@ -1,0 +1,558 @@
+import { clamp } from "@/lib/utils";
+import {
+  contactResponseMinutes,
+  customerNames,
+  dayLength,
+  ingredients,
+  marketUpdateInterval,
+  recipes,
+  shiftStartHour,
+  starterUpgrades
+} from "./data";
+import type {
+  GameState,
+  IngredientId,
+  MarketHistoryEntry,
+  Order,
+  RecipeId,
+  SupplierPrice,
+  UpgradeId
+} from "./types";
+
+const id = (prefix: string, day: number, minute: number, sequence: number) =>
+  `${prefix}-${day}-${minute}-${sequence}`;
+
+export function recipeById(recipeId: RecipeId) {
+  return recipes.find((recipe) => recipe.id === recipeId)!;
+}
+
+export function ingredientById(ingredientId: IngredientId) {
+  return ingredients.find((ingredient) => ingredient.id === ingredientId)!;
+}
+
+export function createInitialGameState(): GameState {
+  const prices = generatePrices(1, 0);
+
+  return {
+    day: 1,
+    minute: 0,
+    shopOpen: false,
+    isRunning: false,
+    speed: 1,
+    cash: 10000,
+    reputation: 50,
+    inventory: ingredients.map((ingredient) => ({
+      ingredientId: ingredient.id,
+      quantity: 0
+    })),
+    prices,
+    marketHistory: createMarketSnapshot(1, 0, prices),
+    orders: [],
+    oven: [{ id: "oven-1", orderId: null, recipeId: null, startedAt: null, readyAt: null }],
+    ledger: [],
+    feedback: [],
+    upgrades: starterUpgrades.map((upgrade) => ({ ...upgrade, purchased: false })),
+    reports: [],
+    eventLog: ["Dia 1 preparado. Compre estoque antes de abrir a loja."],
+    nextOrderId: 1,
+    lastContactAt: null
+  };
+}
+
+export function generatePrices(day: number, minute = 0): SupplierPrice[] {
+  return ingredients.map((ingredient, index) => {
+    const dailyWave = Math.sin(day * 1.7 + index * 0.9) * 12;
+    const intradayWave = Math.sin((minute / marketUpdateInterval + index) * 0.85) * 9;
+    const pressure = Math.cos(day * 0.45 + minute / 95 + index * 1.3) * 5;
+    const changePercent = Math.round(dailyWave + intradayWave + pressure);
+    const price = Number((ingredient.basePrice * (1 + changePercent / 100)).toFixed(2));
+    return { ingredientId: ingredient.id, price: Math.max(0.1, price), changePercent };
+  });
+}
+
+export function openShop(state: GameState): GameState {
+  if (state.shopOpen) return state;
+
+  return {
+    ...state,
+    shopOpen: true,
+    isRunning: true,
+    minute: 0,
+    eventLog: [`Loja aberta as ${timeLabel(0)}. Clientes podem chamar no inbox.`, ...state.eventLog]
+  };
+}
+
+export function toggleRunning(state: GameState): GameState {
+  if (!state.shopOpen || state.minute >= dayLength) return state;
+  return { ...state, isRunning: !state.isRunning };
+}
+
+export function setSpeed(state: GameState, speed: 1 | 2 | 3): GameState {
+  return { ...state, speed };
+}
+
+export function buyIngredient(state: GameState, ingredientId: IngredientId, quantity: number): GameState {
+  const price = state.prices.find((item) => item.ingredientId === ingredientId)?.price ?? 0;
+  const total = Number((price * quantity).toFixed(2));
+
+  if (quantity <= 0 || state.cash < total) {
+    return withLog(state, "Compra nao realizada: caixa insuficiente ou quantidade invalida.");
+  }
+
+  return {
+    ...state,
+    cash: Number((state.cash - total).toFixed(2)),
+    inventory: state.inventory.map((item) =>
+      item.ingredientId === ingredientId
+        ? { ...item, quantity: item.quantity + quantity }
+        : item
+    ),
+    ledger: [
+      ...state.ledger,
+      {
+        id: id("ledger", state.day, state.minute, state.ledger.length + 1),
+        day: state.day,
+        minute: state.minute,
+        type: "purchase",
+        label: `Compra de ${quantity} ${ingredientById(ingredientId).name}`,
+        amount: -total
+      }
+    ],
+    eventLog: [
+      `Comprou ${quantity} ${ingredientById(ingredientId).unit} de ${ingredientById(ingredientId).name}.`,
+      ...state.eventLog
+    ]
+  };
+}
+
+export function acceptOrder(state: GameState, orderId: string): GameState {
+  const order = state.orders.find((item) => item.id === orderId);
+  if (!order || order.status !== "contacting" || state.minute > (order.contactExpiresAt ?? 0)) {
+    return withLog(state, "Esse cliente nao esta mais aguardando resposta.");
+  }
+
+  return {
+    ...state,
+    orders: state.orders.map((item) =>
+      item.id === orderId ? { ...item, status: "accepted", acceptedAt: state.minute } : item
+    ),
+    eventLog: [`Pedido ${orderId} aceito pelo WhatsApp.`, ...state.eventLog]
+  };
+}
+
+export function rejectOrder(state: GameState, orderId: string): GameState {
+  return {
+    ...state,
+    reputation: clamp(state.reputation - 1, 0, 100),
+    orders: state.orders.map((order) =>
+      ["contacting", "waiting"].includes(order.status) && order.id === orderId
+        ? { ...order, status: "rejected" }
+        : order
+    ),
+    eventLog: [`Pedido ${orderId} recusado. A reputacao caiu levemente.`, ...state.eventLog]
+  };
+}
+
+export function startBaking(state: GameState, orderId: string): GameState {
+  const order = state.orders.find((item) => item.id === orderId);
+  const freeSlot = state.oven.find((slot) => !slot.orderId);
+  if (!order || order.status !== "accepted" || !freeSlot) {
+    return withLog(state, "Nao foi possivel iniciar o forno para esse pedido.");
+  }
+
+  const recipe = recipeById(order.recipeId);
+  if (!hasIngredients(state, recipe.ingredients)) {
+    return withLog(state, "Estoque insuficiente para preparar esse pedido.");
+  }
+
+  return {
+    ...state,
+    inventory: state.inventory.map((item) => ({
+      ...item,
+      quantity: item.quantity - (recipe.ingredients[item.ingredientId] ?? 0)
+    })),
+    orders: state.orders.map((item) =>
+      item.id === orderId ? { ...item, status: "baking" } : item
+    ),
+    oven: state.oven.map((slot) =>
+      slot.id === freeSlot.id
+        ? {
+            ...slot,
+            orderId,
+            recipeId: order.recipeId,
+            startedAt: state.minute,
+            readyAt: state.minute + recipe.bakeMinutes
+          }
+        : slot
+    ),
+    eventLog: [`${recipe.name} entrou no forno para ${order.customerName}.`, ...state.eventLog]
+  };
+}
+
+export function deliverOrder(state: GameState, orderId: string): GameState {
+  const order = state.orders.find((item) => item.id === orderId);
+  if (!order || order.status !== "ready") {
+    return withLog(state, "Esse pedido ainda nao esta pronto para despacho.");
+  }
+
+  const eta = deliveryEta(order, state.day);
+  return {
+    ...state,
+    orders: state.orders.map((item) =>
+      item.id === orderId
+        ? {
+            ...item,
+            status: "delivering",
+            deliveryStartedAt: state.minute,
+            deliveryEta: eta,
+            deliveryArrivesAt: state.minute + eta
+          }
+        : item
+    ),
+    eventLog: [`Motoboy saiu com o pedido ${orderId}. ETA: ${eta} min.`, ...state.eventLog]
+  };
+}
+
+export function advanceTime(state: GameState, minutes: number): GameState {
+  if (!state.shopOpen || minutes <= 0) return state;
+
+  const nextMinute = Math.min(dayLength, state.minute + minutes);
+  let nextState: GameState = { ...state, minute: nextMinute };
+
+  nextState = updateMarket(nextState, state.minute, nextMinute);
+  nextState = completeOvenJobs(nextState);
+  nextState = expireContacts(nextState, state);
+  nextState = completeDeliveries(nextState, state);
+  nextState = failAbandonedOrders(nextState, state);
+
+  if (nextMinute < dayLength) {
+    nextState = maybeGenerateContact(nextState);
+  } else if (state.minute < dayLength) {
+    nextState = {
+      ...nextState,
+      isRunning: false,
+      eventLog: [`Turno encerrado as ${timeLabel(dayLength)}. Feche o dia para ver o relatorio.`, ...nextState.eventLog]
+    };
+  }
+
+  return nextState;
+}
+
+export function endDay(state: GameState): GameState {
+  const dayLedger = state.ledger.filter((entry) => entry.day === state.day);
+  const revenue = sum(dayLedger.filter((entry) => entry.amount > 0).map((entry) => entry.amount));
+  const costs = Math.abs(sum(dayLedger.filter((entry) => entry.amount < 0).map((entry) => entry.amount)));
+  const accepted = state.orders.filter((order) =>
+    ["accepted", "baking", "ready", "delivering", "delivered", "failed"].includes(order.status)
+  ).length;
+  const delivered = state.orders.filter((order) => order.status === "delivered").length;
+  const complaints =
+    state.feedback.filter((item) => item.reputationDelta < 0).length +
+    state.orders.filter((order) => ["failed", "expired"].includes(order.status)).length;
+  const report = {
+    day: state.day,
+    revenue,
+    costs,
+    profit: Number((revenue - costs).toFixed(2)),
+    accepted,
+    delivered,
+    complaints,
+    reputation: state.reputation,
+    cashEnd: state.cash
+  };
+  const nextDay = state.day + 1;
+  const nextOvenCount = hasUpgrade(state, "oven") ? 2 : 1;
+  const prices = generatePrices(nextDay, 0);
+
+  return {
+    ...state,
+    day: nextDay,
+    minute: 0,
+    shopOpen: false,
+    isRunning: false,
+    speed: 1,
+    prices,
+    marketHistory: createMarketSnapshot(nextDay, 0, prices),
+    orders: [],
+    oven: Array.from({ length: nextOvenCount }, (_, index) => ({
+      id: `oven-${index + 1}`,
+      orderId: null,
+      recipeId: null,
+      startedAt: null,
+      readyAt: null
+    })),
+    reports: [...state.reports, report],
+    eventLog: [`Dia ${nextDay} preparado. Estoque mantido e mercado reiniciado.`, ...state.eventLog],
+    lastContactAt: null
+  };
+}
+
+export function purchaseUpgrade(state: GameState, upgradeId: UpgradeId): GameState {
+  const upgrade = state.upgrades.find((item) => item.id === upgradeId);
+  if (!upgrade || upgrade.purchased || upgrade.dayUnlock > state.day || state.cash < upgrade.cost) {
+    return withLog(state, "Melhoria indisponivel ou caixa insuficiente.");
+  }
+
+  const nextState: GameState = {
+    ...state,
+    cash: Number((state.cash - upgrade.cost).toFixed(2)),
+    upgrades: state.upgrades.map((item) =>
+      item.id === upgradeId ? { ...item, purchased: true } : item
+    ),
+    ledger: [
+      ...state.ledger,
+      {
+        id: id("ledger", state.day, state.minute, state.ledger.length + 1),
+        day: state.day,
+        minute: state.minute,
+        type: "upgrade",
+        label: upgrade.name,
+        amount: -upgrade.cost
+      }
+    ],
+    eventLog: [`Melhoria comprada: ${upgrade.name}.`, ...state.eventLog]
+  };
+
+  if (upgradeId === "oven") {
+    return {
+      ...nextState,
+      oven: [
+        ...nextState.oven,
+        { id: `oven-${nextState.oven.length + 1}`, orderId: null, recipeId: null, startedAt: null, readyAt: null }
+      ]
+    };
+  }
+
+  return nextState;
+}
+
+export function timeLabel(minute: number) {
+  const hour = shiftStartHour + Math.floor(minute / 60);
+  const min = String(minute % 60).padStart(2, "0");
+  return `${String(hour).padStart(2, "0")}:${min}`;
+}
+
+function updateMarket(state: GameState, previousMinute: number, nextMinute: number): GameState {
+  const nextMarketMinute = Math.floor(nextMinute / marketUpdateInterval) * marketUpdateInterval;
+  const previousMarketMinute = Math.floor(previousMinute / marketUpdateInterval) * marketUpdateInterval;
+  if (nextMarketMinute <= previousMarketMinute) return state;
+
+  const prices = generatePrices(state.day, nextMarketMinute);
+  return {
+    ...state,
+    prices,
+    marketHistory: [
+      ...state.marketHistory,
+      ...createMarketSnapshot(state.day, nextMarketMinute, prices)
+    ],
+    eventLog: [`Mercado atualizou os precos as ${timeLabel(nextMarketMinute)}.`, ...state.eventLog]
+  };
+}
+
+function completeOvenJobs(state: GameState): GameState {
+  const readyOrderIds = state.oven
+    .filter((slot) => slot.orderId && slot.readyAt !== null && slot.readyAt <= state.minute)
+    .map((slot) => slot.orderId!);
+
+  if (readyOrderIds.length === 0) return state;
+
+  return {
+    ...state,
+    oven: state.oven.map((slot) =>
+      slot.orderId && readyOrderIds.includes(slot.orderId)
+        ? { ...slot, orderId: null, recipeId: null, startedAt: null, readyAt: null }
+        : slot
+    ),
+    orders: state.orders.map((order) =>
+      readyOrderIds.includes(order.id) && order.status === "baking"
+        ? { ...order, status: "ready" }
+        : order
+    ),
+    eventLog: [`${readyOrderIds.length} pizza(s) sairam do forno.`, ...state.eventLog]
+  };
+}
+
+function expireContacts(state: GameState, previousState: GameState): GameState {
+  const expiredOrders = state.orders.filter(
+    (order) =>
+      order.status === "contacting" &&
+      (order.contactExpiresAt ?? Number.POSITIVE_INFINITY) <= state.minute &&
+      previousState.orders.find((previous) => previous.id === order.id)?.status === "contacting"
+  );
+  if (expiredOrders.length === 0) return state;
+
+  const penalty = expiredOrders.reduce((total, order) => total + Math.ceil(order.demanding / 2), 0);
+  return {
+    ...state,
+    reputation: clamp(state.reputation - penalty, 0, 100),
+    orders: state.orders.map((order) =>
+      expiredOrders.some((expired) => expired.id === order.id)
+        ? { ...order, status: "expired" }
+        : order
+    ),
+    eventLog: [
+      `${expiredOrders.length} cliente(s) desistiram no chat. Reputacao -${penalty}.`,
+      ...state.eventLog
+    ]
+  };
+}
+
+function completeDeliveries(state: GameState, previousState: GameState): GameState {
+  const arrivingOrders = state.orders.filter(
+    (order) =>
+      order.status === "delivering" &&
+      (order.deliveryArrivesAt ?? Number.POSITIVE_INFINITY) <= state.minute &&
+      previousState.orders.find((previous) => previous.id === order.id)?.status === "delivering"
+  );
+  if (arrivingOrders.length === 0) return state;
+
+  return arrivingOrders.reduce((nextState, order) => closeDelivery(nextState, order), state);
+}
+
+function closeDelivery(state: GameState, order: Order): GameState {
+  const arrivalMinute = order.deliveryArrivesAt ?? state.minute;
+  const lateMinutes = Math.max(0, arrivalMinute - order.dueAt);
+  const helperBonus = hasUpgrade(state, "helper") ? 15 : 0;
+  const adjustedLate = Math.max(0, lateMinutes - helperBonus);
+  const packagingBonus = hasUpgrade(state, "packaging") ? 1 : 0;
+  const repDelta = adjustedLate > 0 ? -Math.ceil(adjustedLate / 8) : 1 + packagingBonus;
+  const message =
+    adjustedLate > 0
+      ? `Cliente reclamou de atraso de ${adjustedLate} min.`
+      : "Entrega no prazo. Cliente satisfeito.";
+
+  return {
+    ...state,
+    cash: Number((state.cash + order.value).toFixed(2)),
+    reputation: clamp(state.reputation + repDelta, 0, 100),
+    orders: state.orders.map((item) =>
+      item.id === order.id ? { ...item, status: "delivered" } : item
+    ),
+    ledger: [
+      ...state.ledger,
+      {
+        id: id("ledger", state.day, arrivalMinute, state.ledger.length + 1),
+        day: state.day,
+        minute: arrivalMinute,
+        type: "sale",
+        label: `Venda ${recipeById(order.recipeId).name}`,
+        amount: order.value
+      }
+    ],
+    feedback: [
+      ...state.feedback,
+      {
+        id: id("feedback", state.day, arrivalMinute, state.feedback.length + 1),
+        orderId: order.id,
+        message,
+        reputationDelta: repDelta,
+        minute: arrivalMinute
+      }
+    ],
+    eventLog: [`${message} Recebeu R$ ${order.value.toFixed(2)}.`, ...state.eventLog]
+  };
+}
+
+function failAbandonedOrders(state: GameState, previousState: GameState): GameState {
+  const failedOrders = state.orders.filter(
+    (order) =>
+      ["accepted", "baking", "ready"].includes(order.status) &&
+      state.minute > order.dueAt + 60 &&
+      previousState.orders.find((previous) => previous.id === order.id)?.status !== "failed"
+  );
+  if (failedOrders.length === 0) return state;
+
+  return {
+    ...state,
+    reputation: clamp(state.reputation - failedOrders.length * 5, 0, 100),
+    orders: state.orders.map((order) =>
+      failedOrders.some((failed) => failed.id === order.id) ? { ...order, status: "failed" } : order
+    ),
+    eventLog: [`${failedOrders.length} pedido(s) foram perdidos por atraso extremo.`, ...state.eventLog]
+  };
+}
+
+function maybeGenerateContact(state: GameState): GameState {
+  const openContacts = state.orders.filter((order) => order.status === "contacting").length;
+  const activeOrders = state.orders.filter((order) =>
+    ["contacting", "accepted", "baking", "ready", "delivering"].includes(order.status)
+  ).length;
+  if (openContacts >= 3 || activeOrders >= 8) return state;
+  if (state.lastContactAt !== null && state.minute - state.lastContactAt < 8) return state;
+
+  const marketing = hasUpgrade(state, "marketing") ? 12 : 0;
+  const reputationFactor =
+    state.reputation < 20 ? -34 : state.reputation < 35 ? -22 : state.reputation > 70 ? 16 : 0;
+  const threshold = clamp(25 + marketing + reputationFactor, 4, 55);
+  const score = (state.day * 17 + state.minute * 7 + state.reputation + state.nextOrderId * 11) % 100;
+  if (score > threshold) return state;
+
+  const order = createOrder(state.day, state.minute, state.reputation, state.nextOrderId);
+  return {
+    ...state,
+    nextOrderId: state.nextOrderId + 1,
+    lastContactAt: state.minute,
+    orders: [order, ...state.orders],
+    eventLog: [`Mensagem nova de ${order.customerName}: ${recipeById(order.recipeId).name}.`, ...state.eventLog]
+  };
+}
+
+function createOrder(day: number, minute: number, reputation: number, sequence: number): Order {
+  const availableRecipes = reputation > 62 || day >= 6 ? recipes : recipes.slice(0, 2);
+  const recipe = availableRecipes[(day + sequence) % availableRecipes.length];
+  const demanding = clamp(2 + ((day + sequence) % 4), 1, 5);
+  const reputationBonus = reputation > 70 ? 5 : 0;
+  const value = recipe.price + reputationBonus + (demanding - 2) * 2;
+
+  return {
+    id: `P${sequence}`,
+    recipeId: recipe.id,
+    customerName: customerNames[sequence % customerNames.length],
+    value,
+    createdAt: minute,
+    dueAt: minute + 95 - demanding * 5,
+    status: "contacting",
+    demanding,
+    contactExpiresAt: minute + contactResponseMinutes,
+    message: buildCustomerMessage(recipe.name, demanding)
+  };
+}
+
+function buildCustomerMessage(recipeName: string, demanding: number) {
+  const tone = demanding >= 4 ? "Consegue mandar rapido?" : "Boa noite! Ainda da para pedir?";
+  return `${tone} Quero uma ${recipeName}.`;
+}
+
+function deliveryEta(order: Order, day: number) {
+  return clamp(12 + ((day * 5 + order.demanding * 4 + order.id.length * 3) % 17), 12, 28);
+}
+
+function createMarketSnapshot(day: number, minute: number, prices: SupplierPrice[]): MarketHistoryEntry[] {
+  return prices.map((price) => ({
+    id: id("market", day, minute, ingredients.findIndex((ingredient) => ingredient.id === price.ingredientId) + 1),
+    day,
+    minute,
+    ingredientId: price.ingredientId,
+    price: price.price,
+    changePercent: price.changePercent
+  }));
+}
+
+function hasIngredients(state: GameState, needs: Partial<Record<IngredientId, number>>) {
+  return Object.entries(needs).every(([ingredientId, quantity]) => {
+    const item = state.inventory.find((inventory) => inventory.ingredientId === ingredientId);
+    return (item?.quantity ?? 0) >= (quantity ?? 0);
+  });
+}
+
+function hasUpgrade(state: GameState, upgradeId: UpgradeId) {
+  return state.upgrades.some((upgrade) => upgrade.id === upgradeId && upgrade.purchased);
+}
+
+function withLog(state: GameState, message: string): GameState {
+  return { ...state, eventLog: [message, ...state.eventLog] };
+}
+
+function sum(values: number[]) {
+  return Number(values.reduce((total, value) => total + value, 0).toFixed(2));
+}
