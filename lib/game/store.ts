@@ -9,6 +9,7 @@ import {
   createInitialGameState,
   deliverOrder,
   endDay,
+  hireMotoboy,
   openShop,
   purchaseUpgrade,
   rejectOrder,
@@ -27,6 +28,7 @@ export type GameStore = GameState & {
   rejectOrder: (orderId: string) => void;
   startBaking: (orderId: string) => void;
   deliverOrder: (orderId: string) => void;
+  hireMotoboy: () => void;
   advanceTime: (minutes: number) => void;
   endDay: () => void;
   purchaseUpgrade: (upgradeId: UpgradeId) => void;
@@ -46,6 +48,7 @@ export const useGameStore = create<GameStore>()(
       rejectOrder: (orderId) => set((state) => rejectOrder(state, orderId)),
       startBaking: (orderId) => set((state) => startBaking(state, orderId)),
       deliverOrder: (orderId) => set((state) => deliverOrder(state, orderId)),
+      hireMotoboy: () => set((state) => hireMotoboy(state)),
       advanceTime: (minutes) => set((state) => advanceTime(state, minutes)),
       endDay: () => set((state) => endDay(state)),
       purchaseUpgrade: (upgradeId) => set((state) => purchaseUpgrade(state, upgradeId)),
@@ -53,7 +56,7 @@ export const useGameStore = create<GameStore>()(
     }),
     {
       name: "company-simulator-save",
-      version: 2
+      version: 3
     }
   )
 );

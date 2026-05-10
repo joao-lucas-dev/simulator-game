@@ -71,7 +71,7 @@ export const CashLedgerEntrySchema = z.object({
   id: z.string(),
   day: z.number().int().positive(),
   minute: z.number().int().nonnegative(),
-  type: z.enum(["purchase", "sale", "upgrade", "penalty"]),
+  type: z.enum(["purchase", "sale", "upgrade", "penalty", "labor"]),
   label: z.string(),
   amount: z.number()
 });
@@ -122,6 +122,7 @@ export const GameStateSchema = z.object({
   speed: z.union([z.literal(1), z.literal(2), z.literal(3)]),
   cash: z.number(),
   reputation: z.number().min(0).max(100),
+  motoboys: z.number().int().positive(),
   inventory: z.array(InventoryItemSchema),
   prices: z.array(SupplierPriceSchema),
   marketHistory: z.array(MarketHistoryEntrySchema),

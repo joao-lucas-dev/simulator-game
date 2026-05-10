@@ -5,6 +5,8 @@ import {
   dayLength,
   ingredients,
   marketUpdateInterval,
+  motoboyDailyCost,
+  motoboyHireCost,
   recipes,
   shiftStartHour,
   starterUpgrades
@@ -40,7 +42,8 @@ export function createInitialGameState(): GameState {
     isRunning: false,
     speed: 1,
     cash: 10000,
-    reputation: 50,
+    reputation: 20,
+    motoboys: 1,
     inventory: ingredients.map((ingredient) => ({
       ingredientId: ingredient.id,
       quantity: 0
@@ -72,6 +75,10 @@ export function generatePrices(day: number, minute = 0): SupplierPrice[] {
 
 export function openShop(state: GameState): GameState {
   if (state.shopOpen) return state;
+  const missing = getOpeningStockMissing(state);
+  if (missing.length > 0) {
+    return withLog(state, `Nao foi possivel abrir: compre ${missing.join(", ")}.`);
+  }
 
   return {
     ...state,
@@ -79,6 +86,30 @@ export function openShop(state: GameState): GameState {
     isRunning: true,
     minute: 0,
     eventLog: [`Loja aberta as ${timeLabel(0)}. Clientes podem chamar no inbox.`, ...state.eventLog]
+  };
+}
+
+export function hireMotoboy(state: GameState): GameState {
+  if (state.cash < motoboyHireCost) {
+    return withLog(state, "Caixa insuficiente para contratar motoboy.");
+  }
+
+  return {
+    ...state,
+    cash: Number((state.cash - motoboyHireCost).toFixed(2)),
+    motoboys: state.motoboys + 1,
+    ledger: [
+      ...state.ledger,
+      {
+        id: id("ledger", state.day, state.minute, state.ledger.length + 1),
+        day: state.day,
+        minute: state.minute,
+        type: "labor",
+        label: "Contratacao de motoboy",
+        amount: -motoboyHireCost
+      }
+    ],
+    eventLog: [`Motoboy contratado por R$ ${motoboyHireCost.toFixed(2)}.`, ...state.eventLog]
   };
 }
 
@@ -194,6 +225,9 @@ export function deliverOrder(state: GameState, orderId: string): GameState {
   if (!order || order.status !== "ready") {
     return withLog(state, "Esse pedido ainda nao esta pronto para despacho.");
   }
+  if (availableMotoboys(state) <= 0) {
+    return withLog(state, "Todos os motoboys estao em rota.");
+  }
 
   const eta = deliveryEta(order, state.day);
   return {
@@ -239,7 +273,17 @@ export function advanceTime(state: GameState, minutes: number): GameState {
 }
 
 export function endDay(state: GameState): GameState {
-  const dayLedger = state.ledger.filter((entry) => entry.day === state.day);
+  const laborCost = state.motoboys * motoboyDailyCost;
+  const laborEntry = {
+    id: id("ledger", state.day, state.minute, state.ledger.length + 1),
+    day: state.day,
+    minute: state.minute,
+    type: "labor" as const,
+    label: `Diaria de ${state.motoboys} motoboy(s)`,
+    amount: -laborCost
+  };
+  const ledger = [...state.ledger, laborEntry];
+  const dayLedger = ledger.filter((entry) => entry.day === state.day);
   const revenue = sum(dayLedger.filter((entry) => entry.amount > 0).map((entry) => entry.amount));
   const costs = Math.abs(sum(dayLedger.filter((entry) => entry.amount < 0).map((entry) => entry.amount)));
   const accepted = state.orders.filter((order) =>
@@ -258,7 +302,7 @@ export function endDay(state: GameState): GameState {
     delivered,
     complaints,
     reputation: state.reputation,
-    cashEnd: state.cash
+    cashEnd: Number((state.cash - laborCost).toFixed(2))
   };
   const nextDay = state.day + 1;
   const nextOvenCount = hasUpgrade(state, "oven") ? 2 : 1;
@@ -271,6 +315,7 @@ export function endDay(state: GameState): GameState {
     shopOpen: false,
     isRunning: false,
     speed: 1,
+    cash: Number((state.cash - laborCost).toFixed(2)),
     prices,
     marketHistory: createMarketSnapshot(nextDay, 0, prices),
     orders: [],
@@ -282,7 +327,12 @@ export function endDay(state: GameState): GameState {
       readyAt: null
     })),
     reports: [...state.reports, report],
-    eventLog: [`Dia ${nextDay} preparado. Estoque mantido e mercado reiniciado.`, ...state.eventLog],
+    ledger,
+    eventLog: [
+      `Diaria dos motoboys descontada: R$ ${laborCost.toFixed(2)}.`,
+      `Dia ${nextDay} preparado. Estoque mantido e mercado reiniciado.`,
+      ...state.eventLog
+    ],
     lastContactAt: null
   };
 }
@@ -473,17 +523,16 @@ function failAbandonedOrders(state: GameState, previousState: GameState): GameSt
 }
 
 function maybeGenerateContact(state: GameState): GameState {
+  const demand = demandProfile(state.reputation);
   const openContacts = state.orders.filter((order) => order.status === "contacting").length;
   const activeOrders = state.orders.filter((order) =>
     ["contacting", "accepted", "baking", "ready", "delivering"].includes(order.status)
   ).length;
-  if (openContacts >= 3 || activeOrders >= 8) return state;
-  if (state.lastContactAt !== null && state.minute - state.lastContactAt < 8) return state;
+  if (openContacts >= demand.maxContacts || activeOrders >= demand.maxActive) return state;
+  if (state.lastContactAt !== null && state.minute - state.lastContactAt < demand.minGap) return state;
 
-  const marketing = hasUpgrade(state, "marketing") ? 12 : 0;
-  const reputationFactor =
-    state.reputation < 20 ? -34 : state.reputation < 35 ? -22 : state.reputation > 70 ? 16 : 0;
-  const threshold = clamp(25 + marketing + reputationFactor, 4, 55);
+  const marketing = hasUpgrade(state, "marketing") ? 8 : 0;
+  const threshold = clamp(demand.threshold + marketing, 2, 48);
   const score = (state.day * 17 + state.minute * 7 + state.reputation + state.nextOrderId * 11) % 100;
   if (score > threshold) return state;
 
@@ -516,6 +565,37 @@ function createOrder(day: number, minute: number, reputation: number, sequence: 
     contactExpiresAt: minute + contactResponseMinutes,
     message: buildCustomerMessage(recipe.name, demanding)
   };
+}
+
+export function getOpeningStockMissing(state: GameState) {
+  const starterRecipe = recipes[0];
+  return Object.entries(starterRecipe.ingredients)
+    .filter(([ingredientId, quantity]) => {
+      const item = state.inventory.find((inventory) => inventory.ingredientId === ingredientId);
+      return (item?.quantity ?? 0) < (quantity ?? 0);
+    })
+    .map(([ingredientId]) => ingredientById(ingredientId as IngredientId).name);
+}
+
+export function availableMotoboys(state: GameState) {
+  const delivering = state.orders.filter((order) => order.status === "delivering").length;
+  return Math.max(0, state.motoboys - delivering);
+}
+
+function demandProfile(reputation: number) {
+  if (reputation < 20) {
+    return { threshold: 2, minGap: 35, maxContacts: 1, maxActive: 2 };
+  }
+  if (reputation < 35) {
+    return { threshold: 8, minGap: 22, maxContacts: 1, maxActive: 3 };
+  }
+  if (reputation < 60) {
+    return { threshold: 18, minGap: 15, maxContacts: 2, maxActive: 5 };
+  }
+  if (reputation < 80) {
+    return { threshold: 28, minGap: 10, maxContacts: 3, maxActive: 7 };
+  }
+  return { threshold: 38, minGap: 7, maxContacts: 3, maxActive: 9 };
 }
 
 function buildCustomerMessage(recipeName: string, demanding: number) {

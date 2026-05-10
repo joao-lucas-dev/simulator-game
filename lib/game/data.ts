@@ -4,6 +4,8 @@ export const shiftStartHour = 17;
 export const dayLength = 360;
 export const marketUpdateInterval = 30;
 export const contactResponseMinutes = 15;
+export const motoboyHireCost = 600;
+export const motoboyDailyCost = 80;
 
 export const ingredients: Ingredient[] = [
   { id: "dough", name: "Massa", unit: "un", basePrice: 3.2 },
@@ -42,7 +44,7 @@ export const starterUpgrades: Upgrade[] = [
     id: "helper",
     name: "Ajudante",
     description: "Reduz atrasos: clientes toleram 15 minutos extras.",
-    cost: 1200,
+    cost: 1400,
     dayUnlock: 3,
     purchased: false
   },
@@ -50,7 +52,7 @@ export const starterUpgrades: Upgrade[] = [
     id: "oven",
     name: "Forno melhor",
     description: "Adiciona um segundo espaco de forno.",
-    cost: 2200,
+    cost: 3200,
     dayUnlock: 4,
     purchased: false
   },
@@ -58,7 +60,7 @@ export const starterUpgrades: Upgrade[] = [
     id: "packaging",
     name: "Embalagem reforcada",
     description: "Melhora a satisfacao das entregas no prazo.",
-    cost: 850,
+    cost: 900,
     dayUnlock: 2,
     purchased: false
   },
@@ -66,7 +68,7 @@ export const starterUpgrades: Upgrade[] = [
     id: "marketing",
     name: "Marketing local",
     description: "Aumenta a chance de novos pedidos a cada avanco de tempo.",
-    cost: 1500,
+    cost: 2200,
     dayUnlock: 5,
     purchased: false
   },
@@ -74,7 +76,7 @@ export const starterUpgrades: Upgrade[] = [
     id: "menu",
     name: "Cardapio expandido",
     description: "Aumenta o valor medio de alguns pedidos.",
-    cost: 1800,
+    cost: 2600,
     dayUnlock: 6,
     purchased: false
   }
