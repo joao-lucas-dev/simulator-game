@@ -115,11 +115,11 @@ export function hireMotoboy(state: GameState): GameState {
 }
 
 export function toggleRunning(state: GameState): GameState {
-  if (!state.shopOpen || state.minute >= dayLength) return state;
+  if (!state.shopOpen && !hasActiveOrders(state)) return state;
   return { ...state, isRunning: !state.isRunning };
 }
 
-export function setSpeed(state: GameState, speed: 1 | 2 | 3): GameState {
+export function setSpeed(state: GameState, speed: 1 | 3 | 5): GameState {
   return { ...state, speed };
 }
 
@@ -261,12 +261,12 @@ export function deliverOrder(state: GameState, orderId: string): GameState {
 }
 
 export function advanceTime(state: GameState, minutes: number): GameState {
-  if (!state.shopOpen || minutes <= 0) return state;
+  if ((!state.shopOpen && !hasActiveOrders(state)) || minutes <= 0) return state;
 
-  const nextMinute = Math.min(dayLength, state.minute + minutes);
+  const nextMinute = state.minute + minutes;
   let nextState: GameState = { ...state, minute: nextMinute };
 
-  nextState = updateMarket(nextState, state.minute, nextMinute);
+  nextState = updateMarket(nextState, state.minute, Math.min(nextMinute, dayLength));
   nextState = completeOvenJobs(nextState);
   nextState = expireContacts(nextState, state);
   nextState = completeDeliveries(nextState, state);
@@ -275,17 +275,19 @@ export function advanceTime(state: GameState, minutes: number): GameState {
   if (nextMinute < dayLength) {
     nextState = maybeGenerateContact(nextState);
   } else if (state.minute < dayLength) {
-    nextState = {
-      ...nextState,
-      isRunning: false,
-      eventLog: [`Turno encerrado as ${timeLabel(dayLength)}. Feche o dia para ver o relatorio.`, ...nextState.eventLog]
-    };
+    nextState = closeShopForNight(nextState);
+  } else if (!hasActiveOrders(nextState)) {
+    nextState = { ...nextState, isRunning: false };
   }
 
   return nextState;
 }
 
 export function endDay(state: GameState): GameState {
+  if (hasActiveOrders(state)) {
+    return withLog(state, "Conclua os pedidos ativos antes de fechar o dia.");
+  }
+
   const laborCost = state.motoboys * motoboyDailyCost;
   const laborEntry = {
     id: id("ledger", state.day, state.minute, state.ledger.length + 1),
@@ -453,6 +455,30 @@ function expireContacts(state: GameState, previousState: GameState): GameState {
       (order.contactExpiresAt ?? Number.POSITIVE_INFINITY) <= state.minute &&
       previousState.orders.find((previous) => previous.id === order.id)?.status === "contacting"
   );
+  return expireSelectedContacts(state, expiredOrders, `${expiredOrders.length} cliente(s) desistiram no chat.`);
+}
+
+function closeShopForNight(state: GameState): GameState {
+  const openContacts = state.orders.filter((order) => order.status === "contacting");
+  const closedState = expireSelectedContacts(
+    state,
+    openContacts,
+    `${openContacts.length} contato(s) expiraram no fechamento.`
+  );
+
+  return {
+    ...closedState,
+    shopOpen: false,
+    isRunning: hasActiveOrders(closedState),
+    eventLog: [
+      `Loja fechada as ${timeLabel(dayLength)}. Finalize os pedidos aceitos antes de fechar o dia.`,
+      ...closedState.eventLog
+    ],
+    lastContactAt: null
+  };
+}
+
+function expireSelectedContacts(state: GameState, expiredOrders: Order[], summary: string): GameState {
   if (expiredOrders.length === 0) return state;
 
   const penalty = expiredOrders.reduce((total, order) => total + Math.ceil(order.demanding / 2), 0);
@@ -476,7 +502,7 @@ function expireContacts(state: GameState, previousState: GameState): GameState {
       }))
     ],
     eventLog: [
-      `${expiredOrders.length} cliente(s) desistiram no chat. Reputacao -${penalty}.`,
+      `${summary} Reputacao -${penalty}.`,
       ...state.eventLog
     ]
   };
@@ -616,6 +642,12 @@ export function getOpeningStockMissing(state: GameState) {
 export function availableMotoboys(state: GameState) {
   const delivering = state.orders.filter((order) => order.status === "delivering").length;
   return Math.max(0, state.motoboys - delivering);
+}
+
+export function hasActiveOrders(state: GameState) {
+  return state.orders.some((order) =>
+    ["accepted", "baking", "ready", "delivering"].includes(order.status)
+  );
 }
 
 function demandProfile(reputation: number) {

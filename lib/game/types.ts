@@ -126,7 +126,7 @@ export const GameStateSchema = z.object({
   minute: z.number().int().nonnegative(),
   shopOpen: z.boolean(),
   isRunning: z.boolean(),
-  speed: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+  speed: z.union([z.literal(1), z.literal(3), z.literal(5)]),
   cash: z.number(),
   reputation: z.number().min(0).max(100),
   motoboys: z.number().int().positive(),

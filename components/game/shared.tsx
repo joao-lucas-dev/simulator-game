@@ -6,7 +6,7 @@ import type { GameStore } from "@/lib/game/store";
 import type { Order } from "@/lib/game/types";
 import { reputationBreakdown, reputationLabel } from "./game-view-models";
 
-const speedOptions = [1, 2, 3] as const;
+const speedOptions = [1, 3, 5] as const;
 
 export function SidebarTab({ value, icon: Icon, label }: { value: string; icon: LucideIcon; label: string }) {
   return (

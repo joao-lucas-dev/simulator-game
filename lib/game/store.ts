@@ -22,7 +22,7 @@ import type { GameState, IngredientId, UpgradeId } from "./types";
 export type GameStore = GameState & {
   openShop: () => void;
   toggleRunning: () => void;
-  setSpeed: (speed: 1 | 2 | 3) => void;
+  setSpeed: (speed: 1 | 3 | 5) => void;
   buyIngredient: (ingredientId: IngredientId, quantity: number) => void;
   acceptOrder: (orderId: string) => void;
   rejectOrder: (orderId: string) => void;
@@ -56,8 +56,12 @@ export const useGameStore = create<GameStore>()(
     }),
     {
       name: "company-simulator-save",
-      version: 5,
-      migrate: () => createInitialGameState()
+      version: 6,
+      migrate: (persistedState) => {
+        const savedState = persistedState as (Partial<GameState> & { speed?: number }) | undefined;
+        const speed = savedState?.speed === 3 || savedState?.speed === 5 ? savedState.speed : 1;
+        return { ...createInitialGameState(), ...savedState, speed };
+      }
     }
   )
 );
