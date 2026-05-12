@@ -102,6 +102,7 @@ export function OrderBadge({ order }: { order: Order }) {
     contacting: { label: "Chat", variant: "destructive" },
     waiting: { label: "Novo", variant: "outline" },
     accepted: { label: "Aceito", variant: "secondary" },
+    preparing: { label: "Preparo", variant: "default" },
     baking: { label: "Forno", variant: "default" },
     ready: { label: "Pronto", variant: "default" },
     delivering: { label: "Em rota", variant: "default" },

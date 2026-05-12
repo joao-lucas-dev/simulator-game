@@ -197,11 +197,10 @@ export function rejectOrder(state: GameState, orderId: string): GameState {
   };
 }
 
-export function startBaking(state: GameState, orderId: string): GameState {
+export function startPreparation(state: GameState, orderId: string): GameState {
   const order = state.orders.find((item) => item.id === orderId);
-  const freeSlot = state.oven.find((slot) => !slot.orderId);
-  if (!order || order.status !== "accepted" || !freeSlot) {
-    return withLog(state, "Nao foi possivel iniciar o forno para esse pedido.");
+  if (!order || order.status !== "accepted" || order.preparationReadyAt !== undefined) {
+    return withLog(state, "Nao foi possivel preparar esse pedido.");
   }
 
   const recipe = recipeById(order.recipeId);
@@ -209,12 +208,39 @@ export function startBaking(state: GameState, orderId: string): GameState {
     return withLog(state, "Estoque insuficiente para preparar esse pedido.");
   }
 
+  const preparationMinutes = preparationTime(state, order);
   return {
     ...state,
     inventory: state.inventory.map((item) => ({
       ...item,
       quantity: item.quantity - (recipe.ingredients[item.ingredientId] ?? 0)
     })),
+    orders: state.orders.map((item) =>
+      item.id === orderId
+        ? {
+            ...item,
+            status: "preparing",
+            preparationStartedAt: state.minute,
+            preparationReadyAt: state.minute + preparationMinutes,
+            preparationMinutes
+          }
+        : item
+    ),
+    eventLog: [`${recipe.name} entrou em preparo para ${order.customerName}.`, ...state.eventLog]
+  };
+}
+
+export function startBaking(state: GameState, orderId: string): GameState {
+  const order = state.orders.find((item) => item.id === orderId);
+  const freeSlot = state.oven.find((slot) => !slot.orderId);
+  if (!order || order.status !== "accepted" || order.preparationReadyAt === undefined || !freeSlot) {
+    return withLog(state, "Nao foi possivel iniciar o forno para esse pedido.");
+  }
+
+  const recipe = recipeById(order.recipeId);
+
+  return {
+    ...state,
     orders: state.orders.map((item) =>
       item.id === orderId ? { ...item, status: "baking" } : item
     ),
@@ -267,6 +293,7 @@ export function advanceTime(state: GameState, minutes: number): GameState {
   let nextState: GameState = { ...state, minute: nextMinute };
 
   nextState = updateMarket(nextState, state.minute, Math.min(nextMinute, dayLength));
+  nextState = completePreparationJobs(nextState);
   nextState = completeOvenJobs(nextState);
   nextState = expireContacts(nextState, state);
   nextState = completeDeliveries(nextState, state);
@@ -312,7 +339,7 @@ export function endDay(state: GameState): GameState {
   const revenue = sum(dayLedger.filter((entry) => entry.amount > 0).map((entry) => entry.amount));
   const costs = Math.abs(sum(dayLedger.filter((entry) => entry.amount < 0).map((entry) => entry.amount)));
   const accepted = state.orders.filter((order) =>
-    ["accepted", "baking", "ready", "delivering", "delivered", "failed"].includes(order.status)
+    ["accepted", "preparing", "baking", "ready", "delivering", "delivered", "failed"].includes(order.status)
   ).length;
   const delivered = state.orders.filter((order) => order.status === "delivered").length;
   const complaints =
@@ -422,6 +449,27 @@ function updateMarket(state: GameState, previousMinute: number, nextMinute: numb
       ...createMarketSnapshot(state.day, nextMarketMinute, prices)
     ],
     eventLog: [`Mercado atualizou os precos as ${timeLabel(nextMarketMinute)}.`, ...state.eventLog]
+  };
+}
+
+function completePreparationJobs(state: GameState): GameState {
+  const preparedOrderIds = state.orders
+    .filter(
+      (order) =>
+        order.status === "preparing" &&
+        order.preparationReadyAt !== undefined &&
+        order.preparationReadyAt <= state.minute
+    )
+    .map((order) => order.id);
+
+  if (preparedOrderIds.length === 0) return state;
+
+  return {
+    ...state,
+    orders: state.orders.map((order) =>
+      preparedOrderIds.includes(order.id) ? { ...order, status: "accepted" } : order
+    ),
+    eventLog: [`${preparedOrderIds.length} pedido(s) terminaram o preparo.`, ...state.eventLog]
   };
 }
 
@@ -568,7 +616,7 @@ function closeDelivery(state: GameState, order: Order): GameState {
 function failAbandonedOrders(state: GameState, previousState: GameState): GameState {
   const failedOrders = state.orders.filter(
     (order) =>
-      ["accepted", "baking", "ready"].includes(order.status) &&
+      ["accepted", "preparing", "baking", "ready"].includes(order.status) &&
       state.minute > order.dueAt + 60 &&
       previousState.orders.find((previous) => previous.id === order.id)?.status !== "failed"
   );
@@ -588,7 +636,7 @@ function maybeGenerateContact(state: GameState): GameState {
   const demand = demandProfile(state.reputation);
   const openContacts = state.orders.filter((order) => order.status === "contacting").length;
   const activeOrders = state.orders.filter((order) =>
-    ["contacting", "accepted", "baking", "ready", "delivering"].includes(order.status)
+    ["contacting", "accepted", "preparing", "baking", "ready", "delivering"].includes(order.status)
   ).length;
   if (openContacts >= demand.maxContacts || activeOrders >= demand.maxActive) return state;
   if (state.lastContactAt !== null && state.minute - state.lastContactAt < demand.minGap) return state;
@@ -646,8 +694,15 @@ export function availableMotoboys(state: GameState) {
 
 export function hasActiveOrders(state: GameState) {
   return state.orders.some((order) =>
-    ["accepted", "baking", "ready", "delivering"].includes(order.status)
+    ["accepted", "preparing", "baking", "ready", "delivering"].includes(order.status)
   );
+}
+
+function preparationTime(state: GameState, order: Order) {
+  const recipe = recipeById(order.recipeId);
+  const ingredientUnits = Object.values(recipe.ingredients).reduce((total, quantity) => total + (quantity ?? 0), 0);
+  const helperReduction = hasUpgrade(state, "helper") ? 3 : 0;
+  return Math.max(5, 8 + ingredientUnits * 2 + order.demanding - helperReduction);
 }
 
 function demandProfile(reputation: number) {

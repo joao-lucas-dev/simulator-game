@@ -41,7 +41,7 @@ export default function Home() {
 
   const contacts = game.orders.filter((order) => order.status === "contacting");
   const activeOrders = game.orders.filter((order) =>
-    ["accepted", "baking", "ready", "delivering"].includes(order.status)
+    ["accepted", "preparing", "baking", "ready", "delivering"].includes(order.status)
   );
   const missingToOpen = getOpeningStockMissing(game);
   const warnings = getWarnings(game, contacts, activeOrders, missingToOpen);

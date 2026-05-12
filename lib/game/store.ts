@@ -15,6 +15,7 @@ import {
   rejectOrder,
   setSpeed,
   startBaking,
+  startPreparation,
   toggleRunning
 } from "./engine";
 import type { GameState, IngredientId, UpgradeId } from "./types";
@@ -26,6 +27,7 @@ export type GameStore = GameState & {
   buyIngredient: (ingredientId: IngredientId, quantity: number) => void;
   acceptOrder: (orderId: string) => void;
   rejectOrder: (orderId: string) => void;
+  startPreparation: (orderId: string) => void;
   startBaking: (orderId: string) => void;
   deliverOrder: (orderId: string) => void;
   hireMotoboy: () => void;
@@ -46,6 +48,7 @@ export const useGameStore = create<GameStore>()(
         set((state) => buyIngredient(state, ingredientId, quantity)),
       acceptOrder: (orderId) => set((state) => acceptOrder(state, orderId)),
       rejectOrder: (orderId) => set((state) => rejectOrder(state, orderId)),
+      startPreparation: (orderId) => set((state) => startPreparation(state, orderId)),
       startBaking: (orderId) => set((state) => startBaking(state, orderId)),
       deliverOrder: (orderId) => set((state) => deliverOrder(state, orderId)),
       hireMotoboy: () => set((state) => hireMotoboy(state)),
@@ -56,7 +59,7 @@ export const useGameStore = create<GameStore>()(
     }),
     {
       name: "company-simulator-save",
-      version: 6,
+      version: 7,
       migrate: (persistedState) => {
         const savedState = persistedState as (Partial<GameState> & { speed?: number }) | undefined;
         const speed = savedState?.speed === 3 || savedState?.speed === 5 ? savedState.speed : 1;

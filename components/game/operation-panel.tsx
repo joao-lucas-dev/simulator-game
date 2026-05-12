@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import {
   Bike,
-  ClipboardList,
+  ChefHat,
   Flame,
   HeartCrack,
   MessageCircle,
@@ -19,10 +19,10 @@ import type { Order, OvenSlot } from "@/lib/game/types";
 import { formatMoney } from "@/lib/utils";
 import { EmptyState, OrderBadge } from "./shared";
 
-type OrderAction = "inbox" | "oven" | "baking" | "dispatch" | "delivering";
+type OrderAction = "inbox" | "preparation" | "baking" | "dispatch" | "delivering";
 
 export function OperationPanel({ game, contacts }: { game: GameStore; contacts: Order[] }) {
-  const waiting = game.orders.filter((order) => order.status === "accepted");
+  const preparation = game.orders.filter((order) => ["accepted", "preparing"].includes(order.status));
   const baking = game.orders.filter((order) => order.status === "baking");
   const ready = game.orders.filter((order) => order.status === "ready");
   const delivering = game.orders.filter((order) => order.status === "delivering");
@@ -52,10 +52,10 @@ export function OperationPanel({ game, contacts }: { game: GameStore; contacts: 
         ))}
       </KanbanColumn>
 
-      <KanbanColumn title="Aguardando forno" icon={ClipboardList} count={waiting.length}>
-        {waiting.length === 0 && <EmptyState text="Nenhum pedido aceito." />}
-        {waiting.map((order) => (
-          <OrderCard key={order.id} game={game} order={order} action="oven" />
+      <KanbanColumn title="Em preparação" icon={ChefHat} count={preparation.length}>
+        {preparation.length === 0 && <EmptyState text="Nenhum pedido em preparo." />}
+        {preparation.map((order) => (
+          <OrderCard key={order.id} game={game} order={order} action="preparation" />
         ))}
       </KanbanColumn>
 
@@ -135,6 +135,11 @@ function OrderCard({ game, order, action }: { game: GameStore; order: Order; act
   const bakeProgress = bakeTotal > 0 && ovenSlot?.startedAt !== null && ovenSlot?.startedAt !== undefined
     ? ((game.minute - ovenSlot.startedAt) / bakeTotal) * 100
     : 0;
+  const preparationTotal = order.preparationMinutes ?? 0;
+  const preparationElapsed = order.preparationStartedAt !== undefined ? game.minute - order.preparationStartedAt : 0;
+  const preparationProgress = preparationTotal > 0 ? (preparationElapsed / preparationTotal) * 100 : 0;
+  const preparationRemaining = Math.max(0, (order.preparationReadyAt ?? game.minute) - game.minute);
+  const isPrepared = order.preparationReadyAt !== undefined && order.status === "accepted";
   const deliveryTotal = order.deliveryEta ?? 1;
   const deliveryElapsed = order.deliveryStartedAt !== undefined ? game.minute - order.deliveryStartedAt : 0;
   const deliveryRemaining = Math.max(0, (order.deliveryArrivesAt ?? game.minute) - game.minute);
@@ -164,11 +169,27 @@ function OrderCard({ game, order, action }: { game: GameStore; order: Order; act
         </>
       )}
 
-      {action === "oven" && (
-        <Button className="mt-3 w-full" size="sm" onClick={() => game.startBaking(order.id)}>
-          <Flame className="mr-2 h-4 w-4" />
-          Enviar ao forno
-        </Button>
+      {action === "preparation" && order.status === "accepted" && (
+        isPrepared ? (
+          <Button className="mt-3 w-full" size="sm" onClick={() => game.startBaking(order.id)}>
+            <Flame className="mr-2 h-4 w-4" />
+            Enviar ao forno
+          </Button>
+        ) : (
+          <Button className="mt-3 w-full" size="sm" onClick={() => game.startPreparation(order.id)}>
+            <ChefHat className="mr-2 h-4 w-4" />
+            Preparar pedido
+          </Button>
+        )
+      )}
+
+      {action === "preparation" && order.status === "preparing" && (
+        <div className="mt-3">
+          <Progress value={Math.max(0, Math.min(100, preparationProgress))} />
+          <div className="mt-2 text-xs text-[#777]">
+            Preparando massa e ingredientes. Falta {preparationRemaining} min.
+          </div>
+        </div>
       )}
 
       {action === "baking" && (

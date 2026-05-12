@@ -10,6 +10,7 @@ export type OrderStatus =
   | "contacting"
   | "waiting"
   | "accepted"
+  | "preparing"
   | "baking"
   | "ready"
   | "delivering"
@@ -48,6 +49,7 @@ export const OrderSchema = z.object({
     "contacting",
     "waiting",
     "accepted",
+    "preparing",
     "baking",
     "ready",
     "delivering",
@@ -58,6 +60,9 @@ export const OrderSchema = z.object({
   ]),
   demanding: z.number().min(1).max(5),
   acceptedAt: z.number().int().nonnegative().optional(),
+  preparationStartedAt: z.number().int().nonnegative().optional(),
+  preparationReadyAt: z.number().int().nonnegative().optional(),
+  preparationMinutes: z.number().int().positive().optional(),
   contactExpiresAt: z.number().int().positive().optional(),
   message: z.string().optional(),
   deliveryStartedAt: z.number().int().nonnegative().optional(),
